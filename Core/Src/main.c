@@ -14,6 +14,15 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  * Pinouts:
+  * PA7 / A6 SPI MOSI
+  * PA6 / A5 SPI MISO
+  * PA5 / A4 SPI CLK
+  * PA4 / A3 SPI NSS (GPIO HIGH ON START)
+  * PA1 / A1 RESET
+  * PA10/ D0 DIO0 Interrupt In.
+  *
+  * PA12/D2 For an attached speaker (dirty digital pulse only)
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -22,6 +31,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include "lora_sx1276.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,6 +50,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -52,6 +64,7 @@ uint8_t inputReceived = 0;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 uint8_t inputBuffer[5];
@@ -77,7 +90,10 @@ volatile uint8_t recieved = 0;
  * GET S1	(Get last sensor 1 value)
  * GET S2	(Get last sensor 2 value)
  * INF		(Current system health and status)
+ * PING		(Lora comms test)
  * */
+
+lora_sx1276 lora;
 
 /* USER CODE END 0 */
 
@@ -111,9 +127,19 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
   //HAL_USART_Transmit(&husart2, (uint8_t *)"Starting!\r\n", 11U, 100U);
+
+  // SX1276 compatible module connected to SPI?, NSS pin connected to GPIO with label LORA_NSS
+  uint8_t res = lora_init(&lora, &hspi1, SPI1_LORA_NSS_GPIO_Port, SPI1_LORA_NSS_Pin, LORA_BASE_FREQUENCY_US);
+
+  if (res != LORA_OK) {
+	HAL_UART_Transmit(&huart2, (uint8_t *)"RFM95 init failed\n\r", 19U, 100U);
+  } else {
+	HAL_UART_Transmit(&huart2, (uint8_t *)"RFM95 init success\n\r", 20U, 100U);
+  }
 
   /* USER CODE END 2 */
 
@@ -203,6 +229,46 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 7;
+  hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -254,7 +320,26 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, LORA_RESET_Pin|SPI1_LORA_NSS_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SPEAKER_GPIO_Port, SPEAKER_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : LORA_RESET_Pin SPI1_LORA_NSS_Pin SPEAKER_Pin */
+  GPIO_InitStruct.Pin = LORA_RESET_Pin|SPI1_LORA_NSS_Pin|SPEAKER_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DIO0_EXT_Pin */
+  GPIO_InitStruct.Pin = DIO0_EXT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DIO0_EXT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LED_Pin */
   GPIO_InitStruct.Pin = LED_Pin;
@@ -274,10 +359,21 @@ void processCommand(){
 		sendCommandHelp();
 	}
 
-	if (strcmp((const char *)rxCommandBuffer, "get t") == 0){
+	if (strcmp((const char *)rxCommandBuffer, "ping") == 0){
 		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
 		HAL_UART_Transmit(&huart2, rxCommandBuffer, strlen((const char *)rxCommandBuffer), 10U);
 		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+
+		uint8_t res = lora_send_packet(&lora, (uint8_t *)"PING!", 5);
+
+		if (res != LORA_OK) {
+			HAL_UART_Transmit(&huart2, (uint8_t *)"Send to Sensor System Failed\n\r", 30U, 100U);
+		} else {
+			HAL_UART_Transmit(&huart2, (uint8_t *)"Send to Sensor System Success\n\r", 31U, 100U);
+		}
+
+		//lora_mode_sleep(&lora);
+
 	}
 }
 

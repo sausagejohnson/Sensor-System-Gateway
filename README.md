@@ -14,7 +14,7 @@ Code is in C.
 
 The project is developed under STM32CubeIDE.
 
-Libraries used: TBA.
+Libraries used: Tiny LoRa for STM32 HAL (by belyalov).
 
 
 ## Hardware, Modules and Wiring
@@ -23,7 +23,7 @@ Development: Nucleo STM32F303K8
 
 Modules currently connected:
 
- - RFM95 915Mhz (SPI)
+ - LoRa RFM95 915Mhz (SPI)
 
 The wiring is currently documented in the code.
 

@@ -63,8 +63,16 @@ void sendCommandHelp();
 /* Private defines -----------------------------------------------------------*/
 #define MCO_Pin GPIO_PIN_0
 #define MCO_GPIO_Port GPIOF
+#define LORA_RESET_Pin GPIO_PIN_1
+#define LORA_RESET_GPIO_Port GPIOA
 #define VCP_TX_Pin GPIO_PIN_2
 #define VCP_TX_GPIO_Port GPIOA
+#define SPI1_LORA_NSS_Pin GPIO_PIN_4
+#define SPI1_LORA_NSS_GPIO_Port GPIOA
+#define DIO0_EXT_Pin GPIO_PIN_10
+#define DIO0_EXT_GPIO_Port GPIOA
+#define SPEAKER_Pin GPIO_PIN_12
+#define SPEAKER_GPIO_Port GPIOA
 #define SWDIO_Pin GPIO_PIN_13
 #define SWDIO_GPIO_Port GPIOA
 #define SWCLK_Pin GPIO_PIN_14
