@@ -31,6 +31,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdio.h>
 #include "lora_sx1276.h"
 /* USER CODE END Includes */
 
@@ -78,12 +79,15 @@ int bufferReady = 0;
 uint8_t rxCommandBuffer[7]; //6 char commands + eol
 volatile uint8_t rxCommandBufferIndex = 0;
 uint8_t rxChar;
-volatile uint8_t recieved = 0;
+volatile uint8_t serialRecieved = 0;
+
+uint8_t loRaRXBuffer[64];
+volatile uint8_t loRaRXBufferStatus = 0; //1 is good and ready to read.
 
 /*
  * Commands:
  * GET T	(Get temperature)
- * SET T	(Get GPS TO Sync time)
+ * GSYNC	(Ask GPS TO Sync time)
  * RES S	(Reset System)
  * RES G	(Reset GPS Module)
  * GET L	(Download log)
@@ -136,9 +140,9 @@ int main(void)
   uint8_t res = lora_init(&lora, &hspi1, SPI1_LORA_NSS_GPIO_Port, SPI1_LORA_NSS_Pin, LORA_BASE_FREQUENCY_US);
 
   if (res != LORA_OK) {
-	HAL_UART_Transmit(&huart2, (uint8_t *)"RFM95 init failed\n\r", 19U, 100U);
+	DebugOutput("RFM95 init failed ", res);
   } else {
-	HAL_UART_Transmit(&huart2, (uint8_t *)"RFM95 init success\n\r", 20U, 100U);
+	DebugOutput("RFM95 init success ", res);
   }
 
   /* USER CODE END 2 */
@@ -149,13 +153,16 @@ int main(void)
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
 
   sendIntroduction();
-  HAL_UART_Transmit(&huart2, (uint8_t *)"COMMAND>", 8U, 10U);
+  sendCommandPrompt();
 
   HAL_UART_Receive_IT(&huart2, &rxChar, 1);
 
+  lora_enable_interrupt_rx_done(&lora);
+  lora_mode_receive_continuous(&lora); //if receive once, make sure this is set again
+
   while (1)
   {
-	if (recieved == 1){
+	if (serialRecieved == 1){
 
 		//filter allowed keys
 		if (rxChar == 13 || rxChar == 127 || rxChar == 32 || rxChar == 63 || ( rxChar >= 48 && rxChar <= 57 ) || (rxChar >= 65 && rxChar <= 90) || (rxChar >= 97 && rxChar <= 122)){
@@ -164,7 +171,7 @@ int main(void)
 				processCommand();
 				rxCommandBufferIndex = 0;
 				rxCommandBuffer[rxCommandBufferIndex] = '\0';
-				HAL_UART_Transmit(&huart2, (uint8_t *)"\r\nCOMMAND>", 10U, 10U);
+				//sendCommandPrompt();
 			} else if (rxChar == 127){
 				if (rxCommandBufferIndex > 0) {
 					rxCommandBufferIndex--;
@@ -183,8 +190,22 @@ int main(void)
 
 		}
 
-		recieved = 0;
+		serialRecieved = 0;
 	}
+
+	// Receive buffer
+	if (loRaRXBufferStatus == 1){
+		HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2U, 10U);
+		DebugOutput("===========> System ACK Received loRaRXBufferStatus: ", loRaRXBufferStatus);
+
+		HAL_UART_Transmit(&huart2, (uint8_t*)loRaRXBuffer, strlen((char*)loRaRXBuffer), 10U);
+		HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2U, 10U);
+
+		memset(loRaRXBuffer, '\0', sizeof(loRaRXBuffer));
+		sendCommandPrompt();
+		loRaRXBufferStatus = 0; //clear: ready for interrupt to accept the next LoRa packet.
+	}
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -348,11 +369,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
+void DebugOutput(const char *message, int16_t number){
+	//max: 93 message chars, 5 number chars, 2 lf/cr
+	char buffer[100];
+	snprintf(buffer, sizeof(buffer), "%s%d\r\n", message, number);
+
+	int length = strlen(buffer);
+	HAL_UART_Transmit(&huart2, (uint8_t *)buffer, length, 10U);
+
+}
 
 void processCommand(){
 	if (strcmp((const char *)rxCommandBuffer, "?") == 0 || strcmp((const char *)rxCommandBuffer, "help") == 0){
@@ -364,16 +399,90 @@ void processCommand(){
 		HAL_UART_Transmit(&huart2, rxCommandBuffer, strlen((const char *)rxCommandBuffer), 10U);
 		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
 
-		uint8_t res = lora_send_packet(&lora, (uint8_t *)"PING!", 5);
+		//uint8_t res = lora_send_packet(&lora, (uint8_t *)"PING!", 5);
+		uint8_t res = lora_send_packet_blocking(&lora, (uint8_t *)"PING", 4U, 1000U);
 
 		if (res != LORA_OK) {
 			HAL_UART_Transmit(&huart2, (uint8_t *)"Send to Sensor System Failed\n\r", 30U, 100U);
+			DebugOutput("ERROR IS: ", res);
+			uint8_t resetResult = lora_init(&lora, &hspi1, SPI1_LORA_NSS_GPIO_Port, SPI1_LORA_NSS_Pin, LORA_BASE_FREQUENCY_US);
+			DebugOutput("RESET RESULT: ", resetResult);
 		} else {
 			HAL_UART_Transmit(&huart2, (uint8_t *)"Send to Sensor System Success\n\r", 31U, 100U);
 		}
 
-		//lora_mode_sleep(&lora);
+		lora_mode_receive_continuous(&lora);
+		HAL_Delay(2000);
+	}
 
+	if (strcmp((const char *)rxCommandBuffer, "get s1") == 0){
+		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+		HAL_UART_Transmit(&huart2, rxCommandBuffer, strlen((const char *)rxCommandBuffer), 10U);
+		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+
+		uint8_t res = lora_send_packet_blocking(&lora, (uint8_t *)"GET S1", 6U, 1000U);
+
+		if (res != LORA_OK) {
+			DebugOutput("ERROR IS: ", res);
+		} else {
+			DebugOutput("GET S1 to Sensor System sent ", res);
+		}
+
+		lora_mode_receive_continuous(&lora);
+		HAL_Delay(2000);
+	}
+
+	if (strcmp((const char *)rxCommandBuffer, "get l") == 0){
+		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+		HAL_UART_Transmit(&huart2, rxCommandBuffer, strlen((const char *)rxCommandBuffer), 10U);
+		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+
+		uint8_t res = lora_send_packet_blocking(&lora, (uint8_t *)"GET L", 5U, 1000U);
+
+		if (res != LORA_OK) {
+			DebugOutput("ERROR IS: ", res);
+		} else {
+			DebugOutput("LOG request sent ", res);
+		}
+
+		lora_mode_receive_continuous(&lora);
+		HAL_Delay(2000);
+	}
+
+	if (strcmp((const char *)rxCommandBuffer, "res g") == 0){
+		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+		HAL_UART_Transmit(&huart2, rxCommandBuffer, strlen((const char *)rxCommandBuffer), 10U);
+		HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2U, 10U);
+
+		uint8_t res = lora_send_packet_blocking(&lora, (uint8_t *)"RES G", 5U, 1000U);
+
+		if (res != LORA_OK) {
+			DebugOutput("ERROR IS: ", res);
+		} else {
+			DebugOutput("GPS reset request sent. ", res);
+		}
+
+		lora_mode_receive_continuous(&lora);
+		HAL_Delay(2000);
+	}
+
+	sendCommandPrompt();
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+
+	if (GPIO_Pin == DIO0_EXT_Pin){
+
+		if (loRaRXBufferStatus == 1)
+			return; //don't accept another packet until the first is taken and processed.
+
+		uint8_t len = lora_receive_packet(&lora, loRaRXBuffer, sizeof(loRaRXBuffer), NULL); //no storing error info yet
+
+		if (len > 0) {
+			loRaRXBufferStatus = 1;
+		}
+
+		//lora_clear_interrupt_rx_all(&lora);
 	}
 }
 
@@ -388,19 +497,26 @@ void sendIntroduction(){
 void sendCommandHelp(){
 	uint8_t help[] ="\r\n\r\nCommands:\r\n"
   				    "\x1b[1;37mGET T  \t \x1b[1;32m(Get temperature)\r\n"
-				    "\x1b[1;37mSET T  \t \x1b[1;32m(Get GPS TO Sync time)\r\n"
+				    "\x1b[1;37mGSYNC  \t \x1b[1;32m(Ask GPS to Sync time)\r\n"
 				    "\x1b[1;37mRES S  \t \x1b[1;32m(Reset System)\r\n"
 				    "\x1b[1;37mRES G  \t \x1b[1;32m(Reset GPS Module)\r\n"
 				    "\x1b[1;37mGET L  \t \x1b[1;32m(Download log)\r\n"
 					"\x1b[1;37mGET S1 \t \x1b[1;32m(Get last sensor 1 value)\r\n"
 					"\x1b[1;37mGET S2 \t \x1b[1;32m(Get last sensor 2 value)\r\n"
 					"\x1b[1;37mINF    \t \x1b[1;32m(Current system health and status)\r\n"
+					"\x1b[1;37mPING   \t \x1b[1;32m(LoRa comms test)\r\n"
 					"\x1b[1;37m";
+
 	HAL_UART_Transmit(&huart2, help, strlen((const char *)help), 40U);
 }
 
+void sendCommandPrompt(){
+	HAL_UART_Transmit(&huart2, (uint8_t *)"COMMAND>", 8U, 10U);
+}
+
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
-	if (recieved == 1){
+	if (serialRecieved == 1){
 		return;
 	}
 	if (huart->Instance == USART2){
@@ -411,7 +527,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 		//if (RX_Char == 13){
 			//HAL_USART_Transmit(&husart2, (uint8_t *)"\n", 1, 10);
 		//}
-		recieved = 1;
+		serialRecieved = 1;
 		HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 		HAL_UART_Receive_IT(huart, &rxChar, 1);
 	}

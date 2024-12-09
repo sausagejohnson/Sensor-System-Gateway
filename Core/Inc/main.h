@@ -57,6 +57,8 @@ void Error_Handler(void);
 void sendIntroduction();
 void processCommand();
 void sendCommandHelp();
+void sendCommandPrompt();
+void DebugOutput(const char *message, int16_t number);
 
 /* USER CODE END EFP */
 
@@ -71,6 +73,7 @@ void sendCommandHelp();
 #define SPI1_LORA_NSS_GPIO_Port GPIOA
 #define DIO0_EXT_Pin GPIO_PIN_10
 #define DIO0_EXT_GPIO_Port GPIOA
+#define DIO0_EXT_EXTI_IRQn EXTI15_10_IRQn
 #define SPEAKER_Pin GPIO_PIN_12
 #define SPEAKER_GPIO_Port GPIOA
 #define SWDIO_Pin GPIO_PIN_13
